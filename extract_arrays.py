@@ -7,6 +7,7 @@
 import argparse
 import pathlib
 
+import numpy as np
 import torch
 
 from esm import Alphabet, FastaBatchedDataset, ProteinBertModel, pretrained
@@ -47,7 +48,8 @@ def create_parser():
         "--include",
         type=str,
         nargs="+",
-        choices=["mean", "per_tok", "bos"],
+        choices=["mean", "per_tok", "bos", "npy_array"],
+        #TODO
         help="specify which representations to return",
         required=True
     )
@@ -94,29 +96,51 @@ def main(args):
             }
 
             for i, label in enumerate(labels):
-                args.output_file = (
-                    args.output_dir / f"{label}.pt"
-                )
+                if "npy_array" not in args.include:
+                    args.output_file = (
+                        args.output_dir / f"{label}.pt"
+                    )
+                else:
+                    args.output_file = (
+                            args.output_dir / f"{label}"
+                    )
                 args.output_file.parent.mkdir(parents=True, exist_ok=True)
-                result = {"label": label}
+
+                if "npy_array" not in args.include:
+                    result = {"label": label}
+
                 if "per_tok" in args.include:
-                    result["representations"] = {
-                        layer: t[i, 1 : len(strs[i]) + 1]
-                        for layer, t in representations.items()
-                    }
+                    if "npy_array" not in args.include:
+                        result["representations"] = {
+                            layer: t[i, 1 : len(strs[i]) + 1]
+                            for layer, t in representations.items()
+                        }
+                    else:
+                        for layer, t in representations.items():
+                            result = t[i, 1: len(strs[i]) + 1]
+                        result.detach().numpy()
+
                 if "mean" in args.include:
-                    result["mean_representations"] = {
-                        layer: t[i, 1 : len(strs[i]) + 1].mean(0)
-                        for layer, t in representations.items()
-                    }
+                    if "npy_array" not in args.include:
+                        result["mean_representations"] = {
+                            layer: t[i, 1 : len(strs[i]) + 1].mean(0)
+                            for layer, t in representations.items()
+                        }
                 if "bos" in args.include:
-                    result["bos_representations"] = {
-                        layer: t[i, 0] for layer, t in representations.items()
-                    }
-                torch.save(
-                    result,
-                    args.output_file,
-                )
+                    if "npy_array" not in args.include:
+                        result["bos_representations"] = {
+                            layer: t[i, 0] for layer, t in representations.items()
+                        }
+                if "npy_array" not in args.include:
+                    torch.save(
+                        result,
+                        args.output_file,
+                    )
+                else:
+                    np.save(
+                        args.output_file,
+                        result
+                    )
 
 
 if __name__ == "__main__":
