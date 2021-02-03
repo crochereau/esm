@@ -47,7 +47,7 @@ def create_parser():
         "--include",
         type=str,
         nargs="+",
-        choices=["mean", "per_tok", "bos"],
+        choices=["mean", "per_tok", "bos", "contacts"],
         help="specify which representations to return",
         required=True
     )
@@ -71,6 +71,7 @@ def main(args):
     print(f"Read {args.fasta_file} with {len(dataset)} sequences")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    return_contacts = "contacts" in args.include
 
     assert all(
         -(model.num_layers + 1) <= i <= model.num_layers for i in args.repr_layers
@@ -87,11 +88,14 @@ def main(args):
             if torch.cuda.is_available() and not args.nogpu:
                 toks = toks.to(device="cuda", non_blocking=True)
 
-            out = model(toks, repr_layers=repr_layers)
+            out = model(toks, repr_layers=repr_layers, return_contacts=return_contacts)
+
             logits = out["logits"].to(device="cpu")
             representations = {
                 layer: t.to(device="cpu") for layer, t in out["representations"].items()
             }
+            if return_contacts:
+                contacts = out["contacts"].to(device="cpu")
 
             for i, label in enumerate(labels):
                 args.output_file = (
@@ -99,20 +103,25 @@ def main(args):
                 )
                 args.output_file.parent.mkdir(parents=True, exist_ok=True)
                 result = {"label": label}
+                # Call clone on tensors to ensure tensors are not views into a larger representation
+                # See https://github.com/pytorch/pytorch/issues/1995
                 if "per_tok" in args.include:
                     result["representations"] = {
-                        layer: t[i, 1 : len(strs[i]) + 1]
+                        layer: t[i, 1 : len(strs[i]) + 1].clone()
                         for layer, t in representations.items()
                     }
                 if "mean" in args.include:
                     result["mean_representations"] = {
-                        layer: t[i, 1 : len(strs[i]) + 1].mean(0)
+                        layer: t[i, 1 : len(strs[i]) + 1].mean(0).clone()
                         for layer, t in representations.items()
                     }
                 if "bos" in args.include:
                     result["bos_representations"] = {
-                        layer: t[i, 0] for layer, t in representations.items()
+                        layer: t[i, 0].clone() for layer, t in representations.items()
                     }
+                if return_contacts:
+                    result["contacts"] = contacts[i, :len(strs[i]), :len(strs[i])].clone()
+
                 torch.save(
                     result,
                     args.output_file,
